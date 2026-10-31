@@ -24,23 +24,33 @@ import subprocess
 import sys
 import threading
 import time
+import platform
+import tempfile
 import urllib.request
-import winreg
 import tkinter as tk
 from tkinter import messagebox, simpledialog, ttk
 
-import pystray
 from PIL import Image, ImageDraw, ImageFont
 from telethon import TelegramClient
 from telethon.errors import SessionPasswordNeededError
 
-VERSIYA = "2.0.1"
+VERSIYA = "2.1.0"
 REPO = "mjavohir06/davomat"
-FROZEN = getattr(sys, "frozen", False)  # PyInstaller exe
+FROZEN = getattr(sys, "frozen", False)  # PyInstaller exe / .app
+WIN = sys.platform == "win32"
+MAC = sys.platform == "darwin"
+if WIN:
+    import winreg
+    import pystray  # soat yonidagi belgi (Mac'da — ekran tepasidagi menyu va Dock)
 HERE = os.path.dirname(sys.executable if FROZEN else os.path.abspath(__file__))
 # exe: dastur %LOCALAPPDATA%\Programs\Davomat da, ma'lumot %APPDATA%\Davomat da (yangilanishda tegilmaydi);
 # ishlab chiqish nusxasi: hammasi skript yonida
-BASE = os.path.join(os.environ.get("APPDATA", HERE), "Davomat") if FROZEN else HERE
+if not FROZEN:
+    BASE = HERE
+elif MAC:
+    BASE = os.path.expanduser("~/Library/Application Support/Davomat")
+else:
+    BASE = os.path.join(os.environ.get("APPDATA", HERE), "Davomat")
 DATA = os.path.join(BASE, "malumot")
 OUT = os.path.join(BASE, "hisobotlar")
 SOZ_FAYL = os.path.join(DATA, "sozlamalar.json")
@@ -52,6 +62,7 @@ UNINSTALL_KEY = r"Software\Microsoft\Windows\CurrentVersion\Uninstall\Davomat"
 PORT = 47631  # bitta nusxa: ikkinchi nusxa birinchisiga "ochil" (yoki "chiqish") deydi
 ISH_SONI = 10  # jadvalda 10 ta ish qatori
 YASHIL = "#107c41"
+UI_FONT = "Segoe UI" if WIN else "Helvetica Neue"
 NO_WINDOW = 0x08000000  # CREATE_NO_WINDOW
 
 STANDART = {
@@ -181,11 +192,19 @@ def tg_havola(s):
 FONTS = os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Fonts")
 
 
+def _shrift(qalin):
+    nomzodlar = [os.path.join(FONTS, "calibrib.ttf" if qalin else "calibri.ttf")] if WIN else []
+    for papka in ("/System/Library/Fonts/Supplemental", "/Library/Fonts"):
+        nomzodlar.append(os.path.join(papka, "Arial Bold.ttf" if qalin else "Arial.ttf"))
+    nomzodlar += ["/System/Library/Fonts/Helvetica.ttc", os.path.join(FONTS, "arialbd.ttf" if qalin else "arial.ttf")]
+    return next((x for x in nomzodlar if os.path.exists(x)), nomzodlar[-1])
+
+
 def rasm_yasa(sana, kelgan, ketgan, ishlar, path, ism=""):
     """Hisobot jadvalini PNG rasmga chizish. sana: datetime.date."""
     k = 2  # tiniq bo'lishi uchun ikki barobar o'lchamda chiziladi
-    f = lambda nom, o: ImageFont.truetype(os.path.join(FONTS, nom), o * k)  # noqa: E731
-    oddiy, qalin, sarlavha = f("calibri.ttf", 20), f("calibrib.ttf", 20), f("calibrib.ttf", 26)
+    f = lambda q, o: ImageFont.truetype(_shrift(q), o * k)  # noqa: E731
+    oddiy, qalin, sarlavha = f(False, 20), f(True, 20), f(True, 26)
     W1, W2, W3 = 56 * k, 520 * k, 150 * k  # raqam | ish / yozuv | vaqt
     PAD, QATOR = 24 * k, 40 * k
     eni = PAD * 2 + W1 + W2 + W3
@@ -283,7 +302,7 @@ def avto_toldir(entry, manba, soni=8):
             o = holat["oyna"] = tk.Toplevel(entry)
             o.overrideredirect(True)
             o.attributes("-topmost", True)
-            lb = holat["lb"] = tk.Listbox(o, font=("Segoe UI", 10), activestyle="none", relief="solid", bd=1,
+            lb = holat["lb"] = tk.Listbox(o, font=(UI_FONT, 10), activestyle="none", relief="solid", bd=1,
                                           selectbackground="#107c41", exportselection=False)
             lb.pack(fill="both", expand=True)
             lb.bind("<ButtonRelease-1>", lambda e: qoy(lb.nearest(e.y)))
@@ -841,8 +860,74 @@ def yangilanish_ol():
                                  headers={"User-Agent": "Davomat", "Accept": "application/vnd.github+json"})
     with urllib.request.urlopen(req, timeout=15) as r:
         d = json.load(r)
-    url = next((a["browser_download_url"] for a in d.get("assets", []) if a["name"].lower().endswith(".exe")), None)
+    mos = (lambda n: n == mac_asset()) if MAC else (lambda n: n.lower().endswith(".exe"))
+    url = next((a["browser_download_url"] for a in d.get("assets", []) if mos(a["name"])), None)
     return d["tag_name"], url, d.get("body") or ""
+
+
+def och(yol):
+    """Fayl, papka yoki havolani tizim dasturida ochish."""
+    if WIN:
+        os.startfile(yol)
+    else:
+        subprocess.Popen(["open", yol])
+
+
+def _as(x):
+    """AppleScript satri uchun ekranlash."""
+    return str(x).replace("\\", "\\\\").replace('"', '\\"')
+
+
+def mac_xabar(matn, sarlavha="Davomat"):
+    subprocess.Popen(["osascript", "-e", f'display notification "{_as(matn)}" with title "{_as(sarlavha)}"'])
+
+
+def mac_clipboard_rasm(path):
+    subprocess.run(["osascript", "-e", f'set the clipboard to (read (POSIX file "{_as(path)}") as «class PNGf»)'],
+                   check=True, timeout=20, capture_output=True)
+
+
+def mac_clipboard_matn(matn):
+    subprocess.run(["pbcopy"], input=matn.encode("utf-8"), check=True, timeout=10,
+                   env={**os.environ, "LANG": "en_US.UTF-8", "LC_CTYPE": "en_US.UTF-8"})
+
+
+def mac_telegram_och(havola=None):
+    """Guruhni havola orqali (bo'lsa) yoki shunchaki Telegram'ni ochadi (Telegram yoki Telegram Desktop)."""
+    if havola:
+        subprocess.Popen(["open", havola])
+        return
+    for nom in ("Telegram", "Telegram Desktop"):
+        if subprocess.run(["open", "-a", nom], capture_output=True).returncode == 0:
+            return
+
+
+def mac_app():
+    """.../Davomat.app (ishlab turgan bundle) yoki None."""
+    i = sys.executable.find(".app/Contents/")
+    return sys.executable[:i + 4] if i > 0 else None
+
+
+MAC_AGENT = os.path.expanduser("~/Library/LaunchAgents/uz.mjavohir.davomat.plist")
+
+
+def mac_avtoyuklash(app):
+    """Kompyuter yonganda (login) o'zi ishga tushsin — LaunchAgent. App boshqa joyga ko'chirilsa yo'li yangilanadi."""
+    import plistlib
+    d = {"Label": "uz.mjavohir.davomat", "ProgramArguments": ["/usr/bin/open", "-a", app], "RunAtLoad": True}
+    try:
+        with open(MAC_AGENT, "rb") as f:
+            if plistlib.load(f) == d:
+                return
+    except (OSError, ValueError):
+        pass
+    os.makedirs(os.path.dirname(MAC_AGENT), exist_ok=True)
+    with open(MAC_AGENT, "wb") as f:
+        plistlib.dump(d, f)
+
+
+def mac_asset():
+    return "Davomat-mac-arm64.zip" if platform.machine() == "arm64" else "Davomat-mac-intel.zip"
 
 
 def tray_korinsin():
@@ -935,6 +1020,10 @@ class Telegram:
         self.ishla(soz, yub, timeout=300)
 
 
+MENYU = (("✅ Keldim", "keldim"), ("🏁 Ketdim", "ketdim"), ("Hisobot", "hisobot"), ("Ishlar ro'yxati", "ishlar"),
+         ("Oylik hisobot", "oylik"), ("Sozlamalar", "sozlamalar"), ("Hisobotlar papkasi", "papka"), ("Chiqish", "chiqish"))
+
+
 class Ilova:
     def __init__(self):
         global TIL
@@ -960,34 +1049,61 @@ class Ilova:
         self.root.iconphoto(True, tk.PhotoImage(data=self._png(self.ikonka_rasm.resize((32, 32)))))
         st = ttk.Style()
         st.configure("Katta.TButton", padding=(12, 8))
-        st.configure("Asosiy.TButton", padding=(18, 14), font=("Segoe UI", 13, "bold"))
+        st.configure("Asosiy.TButton", padding=(18, 14), font=(UI_FONT, 13, "bold"))
 
         threading.Thread(target=self._tinglovchi, daemon=True).start()
 
-        def band(matn, cmd, **kw):  # matn funksiya — til almashsa menyu ham o'zgaradi
-            return pystray.MenuItem(lambda _i: T(matn), lambda: self.q.put(cmd), **kw)
-        self.tray = pystray.Icon("davomat", self.ikonka_rasm, "Davomat", pystray.Menu(
-            band("Ochish", "panel", default=True),
-            band("✅ Keldim", "keldim"),
-            band("🏁 Ketdim", "ketdim"),
-            band("Hisobot", "hisobot"),
-            band("Ishlar ro'yxati", "ishlar"),
-            band("Oylik hisobot", "oylik"),
-            band("Sozlamalar", "sozlamalar"),
-            band("Hisobotlar papkasi", "papka"),
-            band("Chiqish", "chiqish"),
-        ))
-        self.tray.run_detached()
+        self.tray = None
+        if WIN:
+            def band(matn, cmd, **kw):  # matn funksiya — til almashsa menyu ham o'zgaradi
+                return pystray.MenuItem(lambda _i: T(matn), lambda: self.q.put(cmd), **kw)
+            self.tray = pystray.Icon("davomat", self.ikonka_rasm, "Davomat", pystray.Menu(
+                band("Ochish", "panel", default=True),
+                *(band(m, c) for m, c in MENYU),
+            ))
+            self.tray.run_detached()
+        else:  # Mac: ekran tepasidagi menyu; Dock belgisini bosganda asosiy oyna ochiladi
+            self._mac_menyu()
+            self.root.createcommand("::tk::mac::ReopenApplication", lambda *_a: self.q.put("panel"))
+            self.root.createcommand("::tk::mac::Quit", lambda *_a: self.q.put("chiqish"))
 
         self.root.after(300, self._navbat)
         self.root.after(1000, self._tekshir)
-        self.root.after(15_000, tray_korinsin)
+        if WIN:
+            self.root.after(15_000, tray_korinsin)
+        elif FROZEN and mac_app():
+            if "/AppTranslocation/" in mac_app():  # karantindagi app «Yuklamalar» dan ochilgan — yo'li vaqtinchalik
+                self.root.after(800, lambda: messagebox.showinfo("Davomat", T(
+                    "Davomat'ni «Applications» (Programmalar) papkasiga ko'chirib, o'sha yerdan oching — shunda "
+                    "kompyuter yonganda o'zi ishga tushadi va o'zi yangilanadi."), parent=self._ota()))
+            else:
+                try:
+                    mac_avtoyuklash(mac_app())
+                except OSError:
+                    pass
         # asosiy oyna doim pastki panelda turadi; bugun "Keldim" bosilgan yoki dam olish kuni bo'lsa — kichraytirilgan
         self.panel()
         if self.kun().get("keldi") or self.dam_kunimi():
             self.panel_oyna.iconify()
         if not self.soz["ism"]:
             self.root.after(400, self.tanishuv)
+
+    def xabar(self, matn):
+        """Tizim bildirishnomasi."""
+        if self.tray:
+            self.tray.notify(matn, "Davomat")
+        elif MAC:
+            mac_xabar(matn)
+
+    def _mac_menyu(self):
+        m = tk.Menu(self.root)
+        ilova = tk.Menu(m, tearoff=0)
+        for matn, cmd in MENYU:
+            if cmd == "chiqish":
+                ilova.add_separator()
+            ilova.add_command(label=T(matn), command=lambda c=cmd: self.q.put(c))
+        m.add_cascade(label="Davomat", menu=ilova)
+        self.root.config(menu=m)
 
     def _kochir(self):
         """Eski (1.x) sozlamalarni yangisiga moslash."""
@@ -1050,7 +1166,7 @@ class Ilova:
                 self.sozlamalar()
             elif nom == "papka":
                 os.makedirs(OUT, exist_ok=True)
-                os.startfile(OUT)
+                och(OUT)
             elif nom == "yangi":
                 self._yangilanish_taklif(*arg)
             elif nom == "yangi_yoq":
@@ -1061,7 +1177,8 @@ class Ilova:
             elif nom == "yuklandi":
                 self._almashtir(arg[0])
             elif nom == "chiqish":
-                self.tray.stop()
+                if self.tray:
+                    self.tray.stop()
                 self.root.destroy()
                 return
         self.root.after(300, self._navbat)
@@ -1123,7 +1240,7 @@ class Ilova:
                 return
         k["keldi"] = hm(dt.datetime.now())
         self.saqla_holat()
-        self.tray.notify(T("Kelgan vaqt: {v}", v=k["keldi"]), "Davomat")
+        self.xabar(T("Kelgan vaqt: {v}", v=k["keldi"]))
         self._panel_yangila()
 
     def ketdim(self):
@@ -1185,22 +1302,25 @@ class Ilova:
             return
 
         def yukla():
-            yangi = os.path.join(os.path.dirname(sys.executable), "Davomat.new.exe")
+            yangi = (os.path.join(tempfile.mkdtemp(), mac_asset()) if MAC
+                     else os.path.join(os.path.dirname(sys.executable), "Davomat.new.exe"))
             try:
                 req = urllib.request.Request(url, headers={"User-Agent": "Davomat"})
                 with urllib.request.urlopen(req, timeout=120) as r, open(yangi, "wb") as f:
                     shutil.copyfileobj(r, f)
-                if os.path.getsize(yangi) < 1_000_000:
+                if os.path.getsize(yangi) < 1_000_000:  # GitHub xato sahifasi emas
                     raise OSError("yuklangan fayl juda kichik")
             except Exception as e:  # noqa: BLE001
                 self.q.put(("yangi_xato", str(e)))
                 return
             self.q.put(("yuklandi", yangi))
-        self.tray.notify(T("Yangilanish yuklanmoqda..."), "Davomat")
+        self.xabar(T("Yangilanish yuklanmoqda..."))
         threading.Thread(target=yukla, daemon=True).start()
 
     def _almashtir(self, yangi):
         """Ishlab turgan exe nomini o'zgartirib (Windows ruxsat beradi), o'rniga yangisini qo'yib, qayta ishga tushirish."""
+        if MAC:
+            return self._mac_almashtir(yangi)
         exe = sys.executable
         eski = exe[:-4] + ".old.exe"
         try:
@@ -1212,6 +1332,31 @@ class Ilova:
             messagebox.showerror("Davomat", T("Yangilab bo'lmadi:\n{e}", e=e), parent=self._ota())
             return
         ozini_ishga_tushir([exe, "--kut"], cwd=os.path.dirname(exe))
+        self.q.put("chiqish")
+
+    def _mac_almashtir(self, zip_yol):
+        """Mac: zip ichidagi Davomat.app ni ishlab turgan bundle o'rniga qo'yib, qayta ochish."""
+        app = mac_app()
+        try:
+            if not app:
+                raise OSError("Davomat.app topilmadi")
+            tmp = os.path.dirname(zip_yol)
+            subprocess.run(["ditto", "-x", "-k", zip_yol, tmp], check=True, timeout=300, capture_output=True)
+            yangi = os.path.join(tmp, "Davomat.app")
+            if not os.path.isdir(yangi):
+                raise OSError("zip ichida Davomat.app yo'q")
+            eski = app[:-4] + ".old.app"
+            shutil.rmtree(eski, ignore_errors=True)
+            os.rename(app, eski)
+            try:
+                shutil.move(yangi, app)
+            except OSError:
+                os.rename(eski, app)
+                raise
+        except (OSError, subprocess.SubprocessError) as e:
+            messagebox.showerror("Davomat", T("Yangilab bo'lmadi:\n{e}", e=e), parent=self._ota())
+            return
+        subprocess.Popen(["open", "-n", app, "--args", "--kut"])
         self.q.put("chiqish")
 
     # ------------------------------------------------------------ birinchi ishga tushirish
@@ -1229,7 +1374,7 @@ class Ilova:
         w.resizable(False, False)
         f = ttk.Frame(w, padding=18)
         f.pack()
-        ttk.Label(f, text=T("Xush kelibsiz! Bir marta sozlab olamiz."), font=("Segoe UI", 12, "bold")).grid(
+        ttk.Label(f, text=T("Xush kelibsiz! Bir marta sozlab olamiz."), font=(UI_FONT, 12, "bold")).grid(
             row=0, column=0, columnspan=2, sticky="w", pady=(0, 10))
 
         ttk.Label(f, text="Til / Язык / Language:").grid(row=1, column=0, sticky="w")
@@ -1238,14 +1383,14 @@ class Ilova:
         til.grid(row=1, column=1, sticky="w", pady=3)
 
         ttk.Label(f, text=T("Ism-familiyangiz:")).grid(row=2, column=0, sticky="w")
-        ism = ttk.Entry(f, width=40, font=("Segoe UI", 10))
+        ism = ttk.Entry(f, width=40, font=(UI_FONT, 10))
         ism.insert(0, v["ism"])
         ism.grid(row=2, column=1, sticky="w", pady=3)
         ttk.Label(f, text=T("(hisobot rasmida va izohda chiqadi)"), foreground="gray").grid(
             row=3, column=1, sticky="w")
 
         ttk.Label(f, text=T("Guruh havolasi:")).grid(row=4, column=0, sticky="w", pady=(8, 0))
-        havola = ttk.Entry(f, width=40, font=("Segoe UI", 10))
+        havola = ttk.Entry(f, width=40, font=(UI_FONT, 10))
         havola.insert(0, v["havola"])
         havola.grid(row=4, column=1, sticky="w", pady=(8, 3))
         ttk.Label(f, text=T("Guruhdagi istalgan xabar ustida o'ng tugma → «Copy Message Link»\n"
@@ -1253,7 +1398,7 @@ class Ilova:
                   foreground="gray", justify="left").grid(row=5, column=1, sticky="w")
 
         ttk.Label(f, text=T("Ish boshlanish vaqti:")).grid(row=6, column=0, sticky="w", pady=(8, 0))
-        boshi = ttk.Entry(f, width=8, font=("Segoe UI", 10))
+        boshi = ttk.Entry(f, width=8, font=(UI_FONT, 10))
         boshi.insert(0, v["boshi"])
         boshi.grid(row=6, column=1, sticky="w", pady=(8, 3))
 
@@ -1295,6 +1440,8 @@ class Ilova:
 
     def qayta_chiz(self):
         """Til almashganda asosiy oynani yangi tilda qayta chizish."""
+        if MAC:
+            self._mac_menyu()
         if self.panel_oyna and self.panel_oyna.winfo_exists():
             kichik = self.panel_oyna.state() == "iconic"
             self.panel_oyna.destroy()
@@ -1315,9 +1462,9 @@ class Ilova:
             w.protocol("WM_DELETE_WINDOW", w.iconify)  # yopilmaydi — pastki panelda qoladi
             f = ttk.Frame(w, padding=18)
             f.pack()
-            self._p_sana = ttk.Label(f, font=("Segoe UI", 12, "bold"))
+            self._p_sana = ttk.Label(f, font=(UI_FONT, 12, "bold"))
             self._p_sana.grid(row=0, column=0, columnspan=2, sticky="w")
-            self._p_holat = ttk.Label(f, font=("Segoe UI", 10), justify="left")
+            self._p_holat = ttk.Label(f, font=(UI_FONT, 10), justify="left")
             self._p_holat.grid(row=1, column=0, columnspan=2, sticky="w", pady=(4, 12))
             ttk.Button(f, text="✅  " + T("Keldim"), style="Asosiy.TButton", command=self.keldim).grid(
                 row=2, column=0, sticky="we", padx=(0, 6))
@@ -1370,10 +1517,10 @@ class Ilova:
                       foreground=YASHIL).grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 8))
         elif eslatma:
             ttk.Label(f, text=T("⏰ Kunlik hisobotni yuborish vaqti bo'ldi!"), foreground="#c42b1c",
-                      font=("Segoe UI", 11, "bold")).grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 8))
+                      font=(UI_FONT, 11, "bold")).grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 8))
 
         ttk.Label(f, text=T("Ishga kelgan vaqtim:")).grid(row=1, column=0, sticky="w")
-        kelgan = ttk.Entry(f, width=8, font=("Segoe UI", 11))
+        kelgan = ttk.Entry(f, width=8, font=(UI_FONT, 11))
         kelgan.insert(0, k.get("keldi", ""))
         kelgan.grid(row=1, column=1, sticky="w", pady=2)
         ttk.Label(f, text=T("(«Keldim» bosilgan vaqt)"), foreground="gray").grid(row=1, column=2, sticky="w")
@@ -1386,7 +1533,7 @@ class Ilova:
         saqlangan = k.get("ishlar", [])
         for i in range(ISH_SONI):
             ttk.Label(f, text=f"{i + 1}.").grid(row=3 + i, column=0, sticky="e", padx=(0, 6))
-            cb = ttk.Combobox(f, values=list(dict.fromkeys(tayyor + tarix)), width=60, font=("Segoe UI", 10))
+            cb = ttk.Combobox(f, values=list(dict.fromkeys(tayyor + tarix)), width=60, font=(UI_FONT, 10))
             if i < len(saqlangan):
                 cb.insert(0, saqlangan[i])
             avto_toldir(cb, lambda: list(dict.fromkeys(tayyor + tarix)))
@@ -1396,9 +1543,9 @@ class Ilova:
         # o'ng tomonda: oldindan yozib qo'yilgan ishlar — ikki marta bosilsa keyingi bo'sh qatorga tushadi
         o = ttk.Frame(w, padding=(0, 16, 16, 16))
         o.pack(side="left", fill="both")
-        ttk.Label(o, text=T("Tayyor ishlar"), font=("Segoe UI", 10, "bold")).pack(anchor="w")
+        ttk.Label(o, text=T("Tayyor ishlar"), font=(UI_FONT, 10, "bold")).pack(anchor="w")
         ttk.Label(o, text=T("(ikki marta bosing — qo'shiladi)"), foreground="gray").pack(anchor="w")
-        lb = tk.Listbox(o, width=38, height=16, font=("Segoe UI", 10), activestyle="none")
+        lb = tk.Listbox(o, width=38, height=16, font=(UI_FONT, 10), activestyle="none")
         lb.pack(fill="both", expand=True, pady=4)
 
         def royxat_yangila():
@@ -1426,7 +1573,7 @@ class Ilova:
 
         r = 3 + ISH_SONI
         ttk.Label(f, text=T("Ishdan ketgan vaqtim:")).grid(row=r, column=0, sticky="w", pady=(10, 0))
-        ketgan = ttk.Entry(f, width=8, font=("Segoe UI", 11))
+        ketgan = ttk.Entry(f, width=8, font=(UI_FONT, 11))
         ketgan.insert(0, k.get("ketdi") or hm(dt.datetime.now()))
         ketgan.grid(row=r, column=1, sticky="w", pady=(10, 0))
         self._h_ketgan = ketgan
@@ -1501,6 +1648,8 @@ class Ilova:
             if not t:
                 return
             path, izoh = t
+            if MAC:
+                return mac_qolda(path, izoh)
             havola = tg_havola(self.soz["guruh_havola"])
             if havola:  # bir tugma: guruh o'zi ochiladi
                 w.config(cursor="watch")
@@ -1525,7 +1674,7 @@ class Ilova:
             g = ttk.Frame(u, padding=14)
             g.pack()
             ttk.Label(g, text=T("Telegram'da hisobot guruhini oching,\nkeyin «Yuborish ➤» ni bosing."),
-                      font=("Segoe UI", 10, "bold")).pack(anchor="w")
+                      font=(UI_FONT, 10, "bold")).pack(anchor="w")
             ttk.Label(g, text=T("Izoh: «{i}»", i=izoh), foreground="gray").pack(anchor="w", pady=(6, 0))
             ttk.Label(g, text=T("Maslahat: Sozlamalarga guruh havolasini kiritsangiz, guruh o'zi ochiladi."),
                       foreground="gray").pack(anchor="w", pady=(4, 0))
@@ -1544,6 +1693,46 @@ class Ilova:
             ttk.Button(p, text=T("Yuborish ➤"), style="Katta.TButton", command=jonat).pack(side="right")
             ttk.Button(p, text=T("Bekor"), command=u.destroy).pack(side="right", padx=6)
 
+        def mac_qolda(path, izoh):
+            """Mac: guruh ochiladi, rasm clipboardga — xodim ⌘V bosadi, izohni ham ⌘V bilan qo'shadi."""
+            try:
+                mac_clipboard_rasm(path)
+            except (OSError, subprocess.SubprocessError) as e:
+                messagebox.showerror("Davomat", T("Rasmni nusxalab bo'lmadi:\n{e}\n\nRasm saqlandi: {p}", e=e, p=path),
+                                     parent=w)
+                return
+            mac_telegram_och(tg_havola(self.soz["guruh_havola"]))
+            u = tk.Toplevel(w)
+            u.title(T("Telegram orqali yuborish"))
+            u.resizable(False, False)
+            u.attributes("-topmost", True)
+            g = ttk.Frame(u, padding=14)
+            g.pack()
+            ttk.Label(g, text=T("Rasm nusxalandi."), font=(UI_FONT, 12, "bold")).pack(anchor="w")
+            ttk.Label(g, justify="left", text=T(
+                "1) Telegram'da hisobot guruhini oching va xabar maydonida ⌘V bosing — rasm oynasi chiqadi.\n"
+                "2) «Izohni nusxalash» ni bosing, rasm oynasidagi izoh maydonida ⌘V, keyin Enter.\n"
+                "3) Yuborilgach «✔ Yuborildi» ni bosing.")).pack(anchor="w", pady=(6, 0))
+            ttk.Label(g, text=T("Izoh: «{i}»", i=izoh), foreground="gray").pack(anchor="w", pady=(6, 0))
+            ttk.Label(g, text=T("Maslahat: Sozlamalar → Kengaytirilgan (Telegram API) — shunda hisobot to'liq "
+                                "avtomatik ketadi."), foreground="gray").pack(anchor="w", pady=(4, 0))
+
+            def nusxa(fn, arg):
+                try:
+                    fn(arg)
+                except (OSError, subprocess.SubprocessError) as e:
+                    messagebox.showerror("Davomat", str(e), parent=u)
+
+            p = ttk.Frame(g)
+            p.pack(fill="x", pady=(12, 0))
+            ttk.Button(p, text=T("Rasmni nusxalash"), command=lambda: nusxa(mac_clipboard_rasm, path)).pack(side="left")
+            ttk.Button(p, text=T("Izohni nusxalash"), command=lambda: nusxa(mac_clipboard_matn, izoh)).pack(
+                side="left", padx=6)
+            ttk.Button(p, text=T("✔ Yuborildi"), style="Katta.TButton",
+                       command=lambda: (u.destroy(), yuborildi(T("Hisobot Telegram orqali yuborildi.")))).pack(
+                side="right")
+            ttk.Button(p, text=T("Bekor"), command=u.destroy).pack(side="right", padx=6)
+
         def yuborildi(xabar):
             ishlar = malumot()[0]
             k["yuborildi"] = hm(dt.datetime.now())
@@ -1555,14 +1744,15 @@ class Ilova:
             self.saqla_holat()
             self._panel_yangila()
             w.destroy()
-            self.tray.notify(xabar, "Davomat")
+            self.xabar(xabar)
 
         b = ttk.Frame(f)
         b.grid(row=r + 2, column=0, columnspan=3, sticky="e", pady=(14, 0))
         ttk.Button(b, text=T("Keyinroq"), command=keyinroq).pack(side="left", padx=4)
         ttk.Button(b, text=T("Saqlash"), command=qoralama).pack(side="left", padx=4)
-        if self.api_tayyor():  # ikkala usul: asosiy — API, qo'shimcha — Telegram Desktop
-            ttk.Button(b, text=T("Telegram Desktop orqali"), command=ulash).pack(side="left", padx=4)
+        if self.api_tayyor():  # ikkala usul: asosiy — API, qo'shimcha — Telegram ilovasi orqali
+            ttk.Button(b, text=T("Telegram ilovasi orqali") if MAC else T("Telegram Desktop orqali"),
+                       command=ulash).pack(side="left", padx=4)
         ttk.Button(b, text=T("Yuborish ➤"), style="Katta.TButton", command=yubor).pack(side="left", padx=4)
         w.protocol("WM_DELETE_WINDOW", keyinroq)
         self._oldinga(w)
@@ -1581,11 +1771,11 @@ class Ilova:
         f.pack()
         ttk.Label(f, text=T("Hisobotga yozilishi mumkin bo'lgan ishlar. Hisobot oynasida shu ro'yxatdan tanlaysiz."),
                   foreground="gray").grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 6))
-        lb = tk.Listbox(f, width=60, height=14, font=("Segoe UI", 10), activestyle="none")
+        lb = tk.Listbox(f, width=60, height=14, font=(UI_FONT, 10), activestyle="none")
         lb.grid(row=1, column=0, sticky="nsew")
         tug = ttk.Frame(f)
         tug.grid(row=1, column=1, sticky="n", padx=(8, 0))
-        matn = ttk.Entry(f, width=60, font=("Segoe UI", 10))
+        matn = ttk.Entry(f, width=60, font=(UI_FONT, 10))
         matn.grid(row=2, column=0, sticky="we", pady=(8, 0))
 
         def saqla(tanla=None):
@@ -1664,7 +1854,7 @@ class Ilova:
         tanlov = ttk.Combobox(f, values=[oy_nomi(o) for o in oylar], state="readonly", width=18)
         tanlov.current(0)
         tanlov.grid(row=0, column=1, sticky="w", padx=6)
-        natija = ttk.Label(f, font=("Segoe UI", 10), justify="left")
+        natija = ttk.Label(f, font=(UI_FONT, 10), justify="left")
         natija.grid(row=1, column=0, columnspan=3, sticky="w", pady=(12, 0))
 
         def oy():
@@ -1691,7 +1881,7 @@ class Ilova:
                 messagebox.showerror("Davomat", T("Fayl boshqa dasturda ochiq turibdi — Excel'ni yopib, qayta "
                                                   "urinib ko'ring:\n{p}", p=path), parent=w)
                 return
-            os.startfile(path)
+            och(path)
 
         ttk.Button(f, text=T("Excel'ga saqlash va ochish"), style="Katta.TButton", command=excel).grid(
             row=2, column=0, columnspan=3, sticky="e", pady=(14, 0))
@@ -1710,7 +1900,7 @@ class Ilova:
         qator = [0]
 
         def bolim(matn):
-            ttk.Label(f, text=matn, font=("Segoe UI", 10, "bold")).grid(
+            ttk.Label(f, text=matn, font=(UI_FONT, 10, "bold")).grid(
                 row=qator[0], column=0, columnspan=3, sticky="w", pady=(12 if qator[0] else 0, 2))
             qator[0] += 1
 
@@ -1745,7 +1935,7 @@ class Ilova:
                 messagebox.showwarning("Davomat", T("Guruh havolasi noto'g'ri. Masalan: https://t.me/c/1234567890/15 "
                                                     "yoki https://t.me/+AbCdEf..."), parent=w)
                 return
-            os.startfile(h)
+            och(h)
         ttk.Button(f, text=T("Havolani sinash"), command=sina).grid(row=qator[0], column=1, sticky="w", pady=2)
         qator[0] += 1
 
@@ -1766,7 +1956,7 @@ class Ilova:
 
         # ---- kengaytirilgan: Telegram API (Telethon) — ochiladigan bo'lim
         kengayt = ttk.Frame(f)
-        ochiq = [bool(s["api_id"])]
+        ochiq = [bool(s["api_id"]) or MAC]  # Mac'da to'liq avtomatik yuborish faqat API orqali
         tugma = ttk.Button(f)
         tugma.grid(row=qator[0], column=0, columnspan=3, sticky="w", pady=(14, 0))
         qator[0] += 1
@@ -1850,7 +2040,7 @@ class Ilova:
                 return
             t = tk.Toplevel(w)
             t.title(T("Guruhni tanlang"))
-            lb = tk.Listbox(t, width=50, height=18, font=("Segoe UI", 10))
+            lb = tk.Listbox(t, width=50, height=18, font=(UI_FONT, 10))
             for _id, nom in royxat:
                 lb.insert("end", nom)
             lb.pack(padx=10, pady=10)
@@ -1877,9 +2067,12 @@ class Ilova:
         ttk.Label(p, text=T("Versiya {v}", v=VERSIYA), foreground="gray").pack(side="left")
         ttk.Button(p, text=T("Yangilanishni tekshirish"), command=lambda: self.yangilanish_tekshir(qolda=True)).pack(
             side="left", padx=6)
-        if FROZEN:
+        if FROZEN and (WIN or mac_app()):
             def ochir():
-                ozini_ishga_tushir([sys.executable, "--ochirish"])
+                if WIN:
+                    ozini_ishga_tushir([sys.executable, "--ochirish"])
+                else:
+                    self.mac_ochirish()
             ttk.Button(p, text=T("Ilovani o'chirish"), command=ochir).pack(side="left")
 
         def saqla():
@@ -1925,20 +2118,47 @@ class Ilova:
             w.after(300, kirish_holati)
 
 
+def _mac_ochirish(self):
+    """Mac: avtoyuklashni olib tashlaydi, xohlasa ma'lumotni o'chiradi, Davomat.app ni Savatga tashlaydi."""
+    ota = self._ota()
+    if not messagebox.askyesno("Davomat", T("Davomat ilovasini kompyuterdan o'chiraymi?"), parent=ota):
+        return
+    try:
+        os.remove(MAC_AGENT)
+    except OSError:
+        pass
+    if os.path.isdir(BASE) and messagebox.askyesno(
+            "Davomat", T("Sozlamalar, davomat tarixi va hisobot rasmlari ham o'chirilsinmi?\n\n{p}", p=BASE), parent=ota):
+        shutil.rmtree(BASE, ignore_errors=True)
+    app = mac_app()
+    subprocess.run(["osascript", "-e", f'tell application "Finder" to delete POSIX file "{_as(app)}"'],
+                   capture_output=True, timeout=30)
+    messagebox.showinfo("Davomat", T("Davomat o'chirildi."), parent=ota)
+    self.q.put("chiqish")
+
+
+Ilova.mac_ochirish = _mac_ochirish
+
+
 def sinov(fayl):
     """Davomat.exe --sinov <fayl>: yig'ilgan exe ichidagi qismlar ishlashini tekshirish (o'rnatmaydi)."""
-    natija = {"versiya": VERSIYA, "frozen": FROZEN}
-    for nom, fn in (
-            ("uia", lambda: _uia()[1] is not None),
-            ("telegram_exe", telegram_exe),
-            ("telegram_oyna", lambda: bool(_telegram_oynasi())),
-            ("rasm", lambda: rasm_yasa(dt.date.today(), dt.time(9), dt.time(18), ["sinov"],
-                                       os.path.join(os.environ["TEMP"], "davomat_sinov.png"), "Sinov")),
-            ("xlsx", lambda: oylik_xlsx({bugun(): {"keldi": "09:10", "ketdi": "18:00", "ishlar": ["a"]}}, bugun()[:7],
-                                        "Sinov", "09:00", os.path.join(os.environ["TEMP"], "davomat_sinov.xlsx"))),
-            ("telethon", lambda: TelegramClient is not None),
-            ("tarjima", lambda: (len(TR), T("Keldim"))),
-    ):
+    natija = {"versiya": VERSIYA, "frozen": FROZEN, "platforma": sys.platform, "arxitektura": platform.machine()}
+    tmp = tempfile.gettempdir()
+    tekshiruvlar = [
+        ("rasm", lambda: rasm_yasa(dt.date.today(), dt.time(9), dt.time(18), ["sinov"],
+                                   os.path.join(tmp, "davomat_sinov.png"), "Sinov")),
+        ("shrift", lambda: (_shrift(False), _shrift(True))),
+        ("xlsx", lambda: oylik_xlsx({bugun(): {"keldi": "09:10", "ketdi": "18:00", "ishlar": ["a"]}}, bugun()[:7],
+                                    "Sinov", "09:00", os.path.join(tmp, "davomat_sinov.xlsx"))),
+        ("telethon", lambda: TelegramClient is not None),
+        ("tarjima", lambda: (len(TR), T("Keldim"))),
+        ("tk", lambda: tk.Tk().destroy()),
+        ("yangilanish_fayli", lambda: mac_asset() if MAC else ".exe"),
+    ]
+    if WIN:
+        tekshiruvlar += [("uia", lambda: _uia()[1] is not None), ("telegram_exe", telegram_exe),
+                         ("telegram_oyna", lambda: bool(_telegram_oynasi()))]
+    for nom, fn in tekshiruvlar:
         try:
             natija[nom] = repr(fn())
         except Exception as e:  # noqa: BLE001
@@ -1947,15 +2167,59 @@ def sinov(fayl):
         json.dump(natija, f, ensure_ascii=False, indent=1)
 
 
+def ekran_sinovi(papka, til="uz"):
+    """--ekran <papka> [til]: vaqtinchalik ma'lumot bilan oynalarni ochib, rasmga oladi (CI'da Mac ko'rinishini tekshirish)."""
+    global DATA, OUT, SOZ_FAYL, HOLAT_FAYL, SESSION, PORT
+    os.makedirs(papka, exist_ok=True)
+    b = os.path.join(tempfile.mkdtemp(), "Davomat")
+    DATA, OUT = os.path.join(b, "malumot"), os.path.join(b, "hisobotlar")
+    SOZ_FAYL, HOLAT_FAYL, SESSION = (os.path.join(DATA, x) for x in ("sozlamalar.json", "holat.json", "telegram"))
+    PORT = 47698
+    yoz(SOZ_FAYL, {"til": til, "ism": "Sinov Xodim", "guruh_havola": "https://t.me/c/123/1"})
+    yoz(HOLAT_FAYL, {"kunlar": {bugun(): {"keldi": "09:05", "ishlar": ["maket yasash", "hisobot tayyorlash"]}},
+                     "ishlar_tarixi": [], "tayyor_ishlar": ["maket yasash", "hisobot tayyorlash", "uchrashuv"]})
+    app = Ilova()
+    r = app.root
+
+    def surat(nom):
+        r.update()
+        time.sleep(1.0)
+        r.update()
+        yol = os.path.join(papka, f"{til}_{nom}.png")
+        if MAC:
+            subprocess.run(["screencapture", "-x", yol], timeout=30)
+        else:
+            from PIL import ImageGrab
+            ImageGrab.grab(all_screens=True).save(yol)
+
+    for nom, fn in (("panel", app.panel), ("hisobot", app.hisobot), ("sozlamalar", app.sozlamalar),
+                    ("oylik", app.oylik)):
+        fn()
+        surat(nom)
+        for w in (app.hisobot_oyna, app.soz_oyna, app.oylik_oyna):
+            if w and w.winfo_exists() and nom != "panel":
+                w.withdraw()
+    if app.tray:
+        app.tray.stop()
+    r.destroy()
+
+
 def main():
     a = sys.argv[1:]
     if "--sinov" in a:
         sinov(a[a.index("--sinov") + 1])
         return
-    if "--ochirish" in a:
+    if "--ekran" in a:
+        i = a.index("--ekran")
+        ekran_sinovi(a[i + 1], a[i + 2] if len(a) > i + 2 else "uz")
+        return
+    if "--ochirish" in a and WIN:
         ochirish()
         return
-    if FROZEN:
+    if MAC:
+        if FROZEN and mac_app():
+            shutil.rmtree(mac_app()[:-4] + ".old.app", ignore_errors=True)  # yangilanishdan qolgan eski versiya
+    elif FROZEN:
         if os.path.normcase(os.path.abspath(sys.executable)) != os.path.normcase(INSTALL_EXE):
             ornatish()  # yuklab olingan fayl ochildi — o'rnatamiz
             return
@@ -1970,13 +2234,13 @@ def main():
     # bitta nusxa: ilova allaqachon ishlayotgan bo'lsa — uning oynasini ochadi
     if boshqasiga(b"panel"):
         return
-    if FROZEN:
+    if FROZEN and WIN:
         try:
             royxatga_yoz(sys.executable)  # versiya raqami «Ilovalar» ro'yxatida yangilansin
         except OSError:
             pass
-    # pastki panelda python emas, o'z belgisi va nomi bilan alohida ko'rinsin
-    ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("mjavohir.davomat")
+    if WIN:  # pastki panelda python emas, o'z belgisi va nomi bilan alohida ko'rinsin
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("mjavohir.davomat")
     Ilova().root.mainloop()
 
 
@@ -2147,6 +2411,15 @@ TR.update({
     '🏁 Ketdim': ('🏁 Ушёл', '🏁 Left'),
     'Hisobotlar papkasi': ('Папка отчётов', 'Reports folder'),
     'Chiqish': ('Выход', 'Exit'),
+    "Rasmni nusxalab bo'lmadi:\n{e}\n\nRasm saqlandi: {p}": ('Не удалось скопировать изображение:\n{e}\n\nИзображение сохранено: {p}', 'Could not copy the image:\n{e}\n\nImage saved: {p}'),
+    'Rasm nusxalandi.': ('Изображение скопировано.', 'Image copied.'),
+    "1) Telegram'da hisobot guruhini oching va xabar maydonida ⌘V bosing — rasm oynasi chiqadi.\n2) «Izohni nusxalash» ni bosing, rasm oynasidagi izoh maydonida ⌘V, keyin Enter.\n3) Yuborilgach «✔ Yuborildi» ni bosing.": ('1) Откройте в Telegram группу для отчётов и нажмите ⌘V в поле сообщения — появится окно фото.\n2) Нажмите «Скопировать подпись», в поле подписи окна фото нажмите ⌘V, затем Enter.\n3) После отправки нажмите «✔ Отправлено».', "1) Open the report group in Telegram and press ⌘V in the message field — the photo window appears.\n2) Press «Copy caption», then ⌘V in the photo window's caption field, then Enter.\n3) After sending, press «✔ Sent»."),
+    "Maslahat: Sozlamalar → Kengaytirilgan (Telegram API) — shunda hisobot to'liq avtomatik ketadi.": ('Совет: Настройки → Дополнительно (Telegram API) — тогда отчёт будет отправляться полностью автоматически.', 'Tip: Settings → Advanced (Telegram API) — then the report is sent fully automatically.'),
+    'Rasmni nusxalash': ('Скопировать изображение', 'Copy image'),
+    'Izohni nusxalash': ('Скопировать подпись', 'Copy caption'),
+    '✔ Yuborildi': ('✔ Отправлено', '✔ Sent'),
+    'Telegram ilovasi orqali': ('Через приложение Telegram', 'Via the Telegram app'),
+    "Davomat'ni «Applications» (Programmalar) papkasiga ko'chirib, o'sha yerdan oching — shunda kompyuter yonganda o'zi ishga tushadi va o'zi yangilanadi.": ("Перенесите Davomat в папку «Программы» (Applications) и откройте оттуда — тогда он будет запускаться вместе с компьютером и обновляться сам.", "Move Davomat to the Applications folder and open it from there — then it starts with your Mac and updates itself."),
 })
 
 if __name__ == "__main__":

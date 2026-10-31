@@ -1,0 +1,94 @@
+# Mac versiyasi: reliz chiqqanda (chiqarish.ps1) GitHub'ning Mac serverlarida Davomat.app yig'iladi, sinaladi
+# va relizga Davomat-mac-arm64.zip (Apple Silicon: M1/M2/M3/M4) va Davomat-mac-intel.zip sifatida qo'shiladi.
+name: Mac
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      teg:
+        description: "Reliz tegi (masalan v2.1.0)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  mac:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            nom: arm64
+          - os: macos-15-intel
+            nom: intel
+    runs-on: ${{ matrix.os }}
+    env:
+      TEG: ${{ github.event.release.tag_name || inputs.teg }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TEG }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Kutubxonalar
+        run: pip install telethon pillow openpyxl pyinstaller
+
+      - name: Ikonka (.icns)
+        run: |
+          python - <<'EOF'
+          from PIL import Image, ImageDraw
+          k = 16  # 64 px chizma x16 = 1024 px
+          im = Image.new("RGBA", (64 * k, 64 * k), (0, 0, 0, 0))
+          d = ImageDraw.Draw(im)
+          d.rounded_rectangle((2 * k, 2 * k, 62 * k, 62 * k), 14 * k, fill=(16, 124, 65))
+          d.rectangle((16 * k, 14 * k, 48 * k, 50 * k), fill="white")
+          for y in (22, 30, 38):
+              d.line((21 * k, y * k, 43 * k, y * k), fill=(16, 124, 65), width=3 * k)
+          im.save("davomat.icns")
+          EOF
+
+      - name: Yig'ish
+        run: |
+          V="${TEG#v}"
+          pyinstaller --noconfirm --windowed --name Davomat --icon davomat.icns \
+            --osx-bundle-identifier uz.mjavohir.davomat davomat.pyw
+          P=dist/Davomat.app/Contents/Info.plist
+          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $V" "$P"
+          /usr/libexec/PlistBuddy -c "Add :CFBundleVersion string $V" "$P" 2>/dev/null || \
+            /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $V" "$P"
+          /usr/libexec/PlistBuddy -c "Add :NSAppleEventsUsageDescription string Davomat ilovani o'chirishda Finder orqali Savatga tashlaydi." "$P"
+          # Info.plist o'zgargach imzo yangilanishi shart (Apple Silicon imzosiz ilovani ishga tushirmaydi)
+          codesign --force --deep --sign - dist/Davomat.app
+          codesign --verify --deep --strict dist/Davomat.app
+          file dist/Davomat.app/Contents/MacOS/Davomat
+
+      - name: Sinov
+        run: |
+          B=dist/Davomat.app/Contents/MacOS/Davomat
+          "$B" --sinov "$RUNNER_TEMP/sinov.json"
+          cat "$RUNNER_TEMP/sinov.json"
+          python -c "import json,sys; d=json.load(open('$RUNNER_TEMP/sinov.json')); x=[k for k,v in d.items() if str(v).startswith('XATO')]; print('XATOLAR:', x); sys.exit(1 if x else 0)"
+          mkdir -p ekran
+          "$B" --ekran "$PWD/ekran" uz || true
+          "$B" --ekran "$PWD/ekran" ru || true
+          cp "${TMPDIR:-/tmp}/davomat_sinov.png" ekran/hisobot_rasmi.png || true
+          ls -la ekran
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ekran-${{ matrix.nom }}
+          path: ekran
+
+      - name: Relizga yuklash
+        run: |
+          Z="Davomat-mac-${{ matrix.nom }}.zip"
+          ditto -c -k --keepParent dist/Davomat.app "$Z"
+          ls -la "$Z"
+          gh release upload "$TEG" "$Z" --clobber
