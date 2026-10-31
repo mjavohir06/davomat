@@ -34,7 +34,7 @@ from PIL import Image, ImageDraw, ImageFont
 from telethon import TelegramClient
 from telethon.errors import SessionPasswordNeededError
 
-VERSIYA = "2.1.0"
+VERSIYA = "2.1.1"
 REPO = "mjavohir06/davomat"
 FROZEN = getattr(sys, "frozen", False)  # PyInstaller exe / .app
 WIN = sys.platform == "win32"
@@ -63,6 +63,11 @@ PORT = 47631  # bitta nusxa: ikkinchi nusxa birinchisiga "ochil" (yoki "chiqish"
 ISH_SONI = 10  # jadvalda 10 ta ish qatori
 YASHIL = "#107c41"
 UI_FONT = "Segoe UI" if WIN else "Helvetica Neue"
+
+
+def fs(n):
+    """Shrift o'lchami: Mac'da Tk punktlari kichikroq ko'rinadi."""
+    return n if WIN else n + 3
 NO_WINDOW = 0x08000000  # CREATE_NO_WINDOW
 
 STANDART = {
@@ -302,7 +307,7 @@ def avto_toldir(entry, manba, soni=8):
             o = holat["oyna"] = tk.Toplevel(entry)
             o.overrideredirect(True)
             o.attributes("-topmost", True)
-            lb = holat["lb"] = tk.Listbox(o, font=(UI_FONT, 10), activestyle="none", relief="solid", bd=1,
+            lb = holat["lb"] = tk.Listbox(o, font=(UI_FONT, fs(10)), activestyle="none", relief="solid", bd=1,
                                           selectbackground="#107c41", exportselection=False)
             lb.pack(fill="both", expand=True)
             lb.bind("<ButtonRelease-1>", lambda e: qoy(lb.nearest(e.y)))
@@ -1049,7 +1054,7 @@ class Ilova:
         self.root.iconphoto(True, tk.PhotoImage(data=self._png(self.ikonka_rasm.resize((32, 32)))))
         st = ttk.Style()
         st.configure("Katta.TButton", padding=(12, 8))
-        st.configure("Asosiy.TButton", padding=(18, 14), font=(UI_FONT, 13, "bold"))
+        st.configure("Asosiy.TButton", padding=(18, 14), font=(UI_FONT, fs(13), "bold"))
 
         threading.Thread(target=self._tinglovchi, daemon=True).start()
 
@@ -1096,13 +1101,14 @@ class Ilova:
             mac_xabar(matn)
 
     def _mac_menyu(self):
+        """Bandlar ilovaning o'z menyusiga («Davomat», qalin) qo'shiladi; chiqish — tizimning ⌘Q bandi."""
         m = tk.Menu(self.root)
-        ilova = tk.Menu(m, tearoff=0)
+        ilova = tk.Menu(m, name="apple", tearoff=0)
         for matn, cmd in MENYU:
-            if cmd == "chiqish":
-                ilova.add_separator()
-            ilova.add_command(label=T(matn), command=lambda c=cmd: self.q.put(c))
-        m.add_cascade(label="Davomat", menu=ilova)
+            if cmd != "chiqish":
+                ilova.add_command(label=T(matn), command=lambda c=cmd: self.q.put(c))
+        ilova.add_separator()
+        m.add_cascade(menu=ilova)
         self.root.config(menu=m)
 
     def _kochir(self):
@@ -1374,7 +1380,7 @@ class Ilova:
         w.resizable(False, False)
         f = ttk.Frame(w, padding=18)
         f.pack()
-        ttk.Label(f, text=T("Xush kelibsiz! Bir marta sozlab olamiz."), font=(UI_FONT, 12, "bold")).grid(
+        ttk.Label(f, text=T("Xush kelibsiz! Bir marta sozlab olamiz."), font=(UI_FONT, fs(12), "bold")).grid(
             row=0, column=0, columnspan=2, sticky="w", pady=(0, 10))
 
         ttk.Label(f, text="Til / Язык / Language:").grid(row=1, column=0, sticky="w")
@@ -1383,14 +1389,14 @@ class Ilova:
         til.grid(row=1, column=1, sticky="w", pady=3)
 
         ttk.Label(f, text=T("Ism-familiyangiz:")).grid(row=2, column=0, sticky="w")
-        ism = ttk.Entry(f, width=40, font=(UI_FONT, 10))
+        ism = ttk.Entry(f, width=40, font=(UI_FONT, fs(10)))
         ism.insert(0, v["ism"])
         ism.grid(row=2, column=1, sticky="w", pady=3)
         ttk.Label(f, text=T("(hisobot rasmida va izohda chiqadi)"), foreground="gray").grid(
             row=3, column=1, sticky="w")
 
         ttk.Label(f, text=T("Guruh havolasi:")).grid(row=4, column=0, sticky="w", pady=(8, 0))
-        havola = ttk.Entry(f, width=40, font=(UI_FONT, 10))
+        havola = ttk.Entry(f, width=40, font=(UI_FONT, fs(10)))
         havola.insert(0, v["havola"])
         havola.grid(row=4, column=1, sticky="w", pady=(8, 3))
         ttk.Label(f, text=T("Guruhdagi istalgan xabar ustida o'ng tugma → «Copy Message Link»\n"
@@ -1398,7 +1404,7 @@ class Ilova:
                   foreground="gray", justify="left").grid(row=5, column=1, sticky="w")
 
         ttk.Label(f, text=T("Ish boshlanish vaqti:")).grid(row=6, column=0, sticky="w", pady=(8, 0))
-        boshi = ttk.Entry(f, width=8, font=(UI_FONT, 10))
+        boshi = ttk.Entry(f, width=8, font=(UI_FONT, fs(10)))
         boshi.insert(0, v["boshi"])
         boshi.grid(row=6, column=1, sticky="w", pady=(8, 3))
 
@@ -1462,9 +1468,9 @@ class Ilova:
             w.protocol("WM_DELETE_WINDOW", w.iconify)  # yopilmaydi — pastki panelda qoladi
             f = ttk.Frame(w, padding=18)
             f.pack()
-            self._p_sana = ttk.Label(f, font=(UI_FONT, 12, "bold"))
+            self._p_sana = ttk.Label(f, font=(UI_FONT, fs(12), "bold"))
             self._p_sana.grid(row=0, column=0, columnspan=2, sticky="w")
-            self._p_holat = ttk.Label(f, font=(UI_FONT, 10), justify="left")
+            self._p_holat = ttk.Label(f, font=(UI_FONT, fs(10)), justify="left")
             self._p_holat.grid(row=1, column=0, columnspan=2, sticky="w", pady=(4, 12))
             ttk.Button(f, text="✅  " + T("Keldim"), style="Asosiy.TButton", command=self.keldim).grid(
                 row=2, column=0, sticky="we", padx=(0, 6))
@@ -1517,10 +1523,10 @@ class Ilova:
                       foreground=YASHIL).grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 8))
         elif eslatma:
             ttk.Label(f, text=T("⏰ Kunlik hisobotni yuborish vaqti bo'ldi!"), foreground="#c42b1c",
-                      font=(UI_FONT, 11, "bold")).grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 8))
+                      font=(UI_FONT, fs(11), "bold")).grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 8))
 
         ttk.Label(f, text=T("Ishga kelgan vaqtim:")).grid(row=1, column=0, sticky="w")
-        kelgan = ttk.Entry(f, width=8, font=(UI_FONT, 11))
+        kelgan = ttk.Entry(f, width=8, font=(UI_FONT, fs(11)))
         kelgan.insert(0, k.get("keldi", ""))
         kelgan.grid(row=1, column=1, sticky="w", pady=2)
         ttk.Label(f, text=T("(«Keldim» bosilgan vaqt)"), foreground="gray").grid(row=1, column=2, sticky="w")
@@ -1533,7 +1539,7 @@ class Ilova:
         saqlangan = k.get("ishlar", [])
         for i in range(ISH_SONI):
             ttk.Label(f, text=f"{i + 1}.").grid(row=3 + i, column=0, sticky="e", padx=(0, 6))
-            cb = ttk.Combobox(f, values=list(dict.fromkeys(tayyor + tarix)), width=60, font=(UI_FONT, 10))
+            cb = ttk.Combobox(f, values=list(dict.fromkeys(tayyor + tarix)), width=60, font=(UI_FONT, fs(10)))
             if i < len(saqlangan):
                 cb.insert(0, saqlangan[i])
             avto_toldir(cb, lambda: list(dict.fromkeys(tayyor + tarix)))
@@ -1543,9 +1549,9 @@ class Ilova:
         # o'ng tomonda: oldindan yozib qo'yilgan ishlar — ikki marta bosilsa keyingi bo'sh qatorga tushadi
         o = ttk.Frame(w, padding=(0, 16, 16, 16))
         o.pack(side="left", fill="both")
-        ttk.Label(o, text=T("Tayyor ishlar"), font=(UI_FONT, 10, "bold")).pack(anchor="w")
+        ttk.Label(o, text=T("Tayyor ishlar"), font=(UI_FONT, fs(10), "bold")).pack(anchor="w")
         ttk.Label(o, text=T("(ikki marta bosing — qo'shiladi)"), foreground="gray").pack(anchor="w")
-        lb = tk.Listbox(o, width=38, height=16, font=(UI_FONT, 10), activestyle="none")
+        lb = tk.Listbox(o, width=38, height=16, font=(UI_FONT, fs(10)), activestyle="none")
         lb.pack(fill="both", expand=True, pady=4)
 
         def royxat_yangila():
@@ -1573,7 +1579,7 @@ class Ilova:
 
         r = 3 + ISH_SONI
         ttk.Label(f, text=T("Ishdan ketgan vaqtim:")).grid(row=r, column=0, sticky="w", pady=(10, 0))
-        ketgan = ttk.Entry(f, width=8, font=(UI_FONT, 11))
+        ketgan = ttk.Entry(f, width=8, font=(UI_FONT, fs(11)))
         ketgan.insert(0, k.get("ketdi") or hm(dt.datetime.now()))
         ketgan.grid(row=r, column=1, sticky="w", pady=(10, 0))
         self._h_ketgan = ketgan
@@ -1674,7 +1680,7 @@ class Ilova:
             g = ttk.Frame(u, padding=14)
             g.pack()
             ttk.Label(g, text=T("Telegram'da hisobot guruhini oching,\nkeyin «Yuborish ➤» ni bosing."),
-                      font=(UI_FONT, 10, "bold")).pack(anchor="w")
+                      font=(UI_FONT, fs(10), "bold")).pack(anchor="w")
             ttk.Label(g, text=T("Izoh: «{i}»", i=izoh), foreground="gray").pack(anchor="w", pady=(6, 0))
             ttk.Label(g, text=T("Maslahat: Sozlamalarga guruh havolasini kiritsangiz, guruh o'zi ochiladi."),
                       foreground="gray").pack(anchor="w", pady=(4, 0))
@@ -1708,7 +1714,7 @@ class Ilova:
             u.attributes("-topmost", True)
             g = ttk.Frame(u, padding=14)
             g.pack()
-            ttk.Label(g, text=T("Rasm nusxalandi."), font=(UI_FONT, 12, "bold")).pack(anchor="w")
+            ttk.Label(g, text=T("Rasm nusxalandi."), font=(UI_FONT, fs(12), "bold")).pack(anchor="w")
             ttk.Label(g, justify="left", text=T(
                 "1) Telegram'da hisobot guruhini oching va xabar maydonida ⌘V bosing — rasm oynasi chiqadi.\n"
                 "2) «Izohni nusxalash» ni bosing, rasm oynasidagi izoh maydonida ⌘V, keyin Enter.\n"
@@ -1771,11 +1777,11 @@ class Ilova:
         f.pack()
         ttk.Label(f, text=T("Hisobotga yozilishi mumkin bo'lgan ishlar. Hisobot oynasida shu ro'yxatdan tanlaysiz."),
                   foreground="gray").grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 6))
-        lb = tk.Listbox(f, width=60, height=14, font=(UI_FONT, 10), activestyle="none")
+        lb = tk.Listbox(f, width=60, height=14, font=(UI_FONT, fs(10)), activestyle="none")
         lb.grid(row=1, column=0, sticky="nsew")
         tug = ttk.Frame(f)
         tug.grid(row=1, column=1, sticky="n", padx=(8, 0))
-        matn = ttk.Entry(f, width=60, font=(UI_FONT, 10))
+        matn = ttk.Entry(f, width=60, font=(UI_FONT, fs(10)))
         matn.grid(row=2, column=0, sticky="we", pady=(8, 0))
 
         def saqla(tanla=None):
@@ -1854,7 +1860,7 @@ class Ilova:
         tanlov = ttk.Combobox(f, values=[oy_nomi(o) for o in oylar], state="readonly", width=18)
         tanlov.current(0)
         tanlov.grid(row=0, column=1, sticky="w", padx=6)
-        natija = ttk.Label(f, font=(UI_FONT, 10), justify="left")
+        natija = ttk.Label(f, font=(UI_FONT, fs(10)), justify="left")
         natija.grid(row=1, column=0, columnspan=3, sticky="w", pady=(12, 0))
 
         def oy():
@@ -1900,7 +1906,7 @@ class Ilova:
         qator = [0]
 
         def bolim(matn):
-            ttk.Label(f, text=matn, font=(UI_FONT, 10, "bold")).grid(
+            ttk.Label(f, text=matn, font=(UI_FONT, fs(10), "bold")).grid(
                 row=qator[0], column=0, columnspan=3, sticky="w", pady=(12 if qator[0] else 0, 2))
             qator[0] += 1
 
@@ -2040,7 +2046,7 @@ class Ilova:
                 return
             t = tk.Toplevel(w)
             t.title(T("Guruhni tanlang"))
-            lb = tk.Listbox(t, width=50, height=18, font=(UI_FONT, 10))
+            lb = tk.Listbox(t, width=50, height=18, font=(UI_FONT, fs(10)))
             for _id, nom in royxat:
                 lb.insert("end", nom)
             lb.pack(padx=10, pady=10)
