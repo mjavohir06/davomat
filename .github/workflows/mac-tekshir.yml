@@ -1,0 +1,26 @@
+# Tashxis: relizdagi Mac zipini brauzerdan yuklangandek (karantin bilan) tekshiradi — imzo butunmi, Gatekeeper nima deydi.
+name: Mac tekshiruv
+
+on:
+  workflow_dispatch:
+
+jobs:
+  tekshir:
+    runs-on: macos-15
+    steps:
+      - name: Relizdagi zipni tekshirish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -x
+          sw_vers
+          gh release download -R "$GITHUB_REPOSITORY" --pattern "Davomat-mac-arm64.zip" --dir .
+          ditto -x -k Davomat-mac-arm64.zip .
+          A=Davomat.app
+          codesign --verify --deep --strict --verbose=2 "$A" && echo "IMZO: BUTUN" || echo "IMZO: BUZILGAN"
+          codesign -dv "$A" 2>&1 | grep -E "Signature|TeamIdentifier|flags" || true
+          # brauzer qo'yadigan karantin belgisi
+          xattr -w com.apple.quarantine "0083;$(printf %x $(date +%s));Safari;" "$A"
+          xattr -l "$A" | head -3
+          spctl --assess --type execute --verbose=4 "$A" 2>&1 || true
+          syspolicy_check distribution "$A" 2>&1 | tail -15 || true
