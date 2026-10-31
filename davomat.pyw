@@ -34,7 +34,7 @@ from PIL import Image, ImageDraw, ImageFont
 from telethon import TelegramClient
 from telethon.errors import SessionPasswordNeededError
 
-VERSIYA = "2.0.0"
+VERSIYA = "2.0.1"
 REPO = "mjavohir06/davomat"
 FROZEN = getattr(sys, "frozen", False)  # PyInstaller exe
 HERE = os.path.dirname(sys.executable if FROZEN else os.path.abspath(__file__))
@@ -701,6 +701,12 @@ def oylik_xlsx(kunlar, oy, ism, ish_boshi, path):
 
 
 # ------------------------------------------------------------------ bitta nusxa, o'rnatish, yangilanish
+def ozini_ishga_tushir(args, **kw):
+    """O'z exe'mizni mustaqil jarayon sifatida ishga tushirish. PyInstaller onefile: busiz yangi nusxa ota jarayonning
+    vaqtinchalik _MEI papkasini ishlatadi va ota chiqqach «Can't find a usable init.tcl» bilan yiqiladi."""
+    return subprocess.Popen(args, env={**os.environ, "PYINSTALLER_RESET_ENVIRONMENT": "1"}, **kw)
+
+
 def boshqasiga(xabar=b"panel"):
     """Ishlab turgan nusxaga xabar yuborish. Nusxa yo'q bo'lsa False."""
     try:
@@ -796,7 +802,7 @@ def ornatish():
     messagebox.showinfo("Davomat", T("Davomat {v} o'rnatildi.\n\nIsh stolida «Davomat» yorlig'i paydo bo'ldi, "
                                      "kompyuter yonganda o'zi ishga tushadi.\nYuklab olingan faylni endi "
                                      "o'chirib tashlashingiz mumkin.", v=VERSIYA))
-    subprocess.Popen([INSTALL_EXE, "--kut"], cwd=INSTALL_DIR)
+    ozini_ishga_tushir([INSTALL_EXE, "--kut"], cwd=INSTALL_DIR)
 
 
 def ochirish():
@@ -1205,7 +1211,7 @@ class Ilova:
         except OSError as e:
             messagebox.showerror("Davomat", T("Yangilab bo'lmadi:\n{e}", e=e), parent=self._ota())
             return
-        subprocess.Popen([exe, "--kut"], cwd=os.path.dirname(exe))
+        ozini_ishga_tushir([exe, "--kut"], cwd=os.path.dirname(exe))
         self.q.put("chiqish")
 
     # ------------------------------------------------------------ birinchi ishga tushirish
@@ -1873,7 +1879,7 @@ class Ilova:
             side="left", padx=6)
         if FROZEN:
             def ochir():
-                subprocess.Popen([sys.executable, "--ochirish"])
+                ozini_ishga_tushir([sys.executable, "--ochirish"])
             ttk.Button(p, text=T("Ilovani o'chirish"), command=ochir).pack(side="left")
 
         def saqla():
